@@ -55,7 +55,7 @@
       },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
       "targets": [
-        { "refId": "A", "expr": "count(container_last_seen{name=~\".*-app-[0-9]+\"})", "instant": true, "legendFormat": "副本数", "format": "time_series" }
+        { "refId": "A", "expr": "count((time() - container_last_seen{name=~\".*-app-[0-9]+\"}) < 60)", "instant": true, "legendFormat": "副本数", "format": "time_series" }
       ]
     },
     {
