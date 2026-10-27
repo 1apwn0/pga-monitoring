@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  validate:
+    name: 配置校验
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 校验 docker-compose 语法
+        run: docker compose config --quiet
+
+      - name: 校验 Prometheus 配置与告警规则（promtool）
+        run: |
+          docker run --rm \
+            -v "$PWD/prometheus:/etc/prometheus" \
+            --entrypoint promtool prom/prometheus:v2.53.1 \
+            check config /etc/prometheus/prometheus.yml
+
+      - name: 校验 Alertmanager 配置（amtool）
+        run: |
+          docker run --rm \
+            -v "$PWD/alertmanager:/etc/alertmanager" \
+            --entrypoint amtool prom/alertmanager:v0.27.0 \
+            check-config /etc/alertmanager/alertmanager.yml
+
+      - name: 校验 Grafana 看板 JSON
+        run: |
+          python3 - <<'EOF'
+          import json, glob
+          files = glob.glob('grafana/**/*.json', recursive=True)
+          assert files, '未找到看板 JSON 文件'
+          for f in files:
+              json.load(open(f, encoding='utf-8'))
+              print('JSON OK:', f)
+          EOF
+
+  smoke:
+    name: 冒烟测试（拉起即验证）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 启动 Prometheus + Alertmanager 并等待就绪
+        run: |
+          docker compose up -d prometheus alertmanager
+          for i in $(seq 1 45); do
+            if curl -sf http://localhost:9090/-/ready >/dev/null && \
+               curl -sf http://localhost:9093/-/ready >/dev/null; then
+              echo "服务就绪（第 ${i} 次探测）"; exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::服务未在 90 秒内就绪"
+          docker compose logs --tail 50
+          exit 1
+
+      - name: 验证 Prometheus 已加载告警规则
+        run: |
+          curl -sf http://localhost:9090/api/v1/rules | grep -q "AppContainerDown" \
+            && echo "告警规则加载正常" \
+            || { echo "::error::未找到 AppContainerDown 规则"; exit 1; }
+
+      - name: 清理
+        if: always()
+        run: docker compose down -v

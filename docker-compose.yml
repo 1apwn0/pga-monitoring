@@ -1,0 +1,135 @@
+# PGA 监控系统：Prometheus + Grafana + Alertmanager
+# 被监控对象：3 副本 nginx 应用集群 + redis + 压测流量发生器（共 11 个容器）
+name: pga-monitoring
+
+services:
+  # ---------- 监控三巨头 ----------
+  prometheus:
+    image: prom/prometheus:v2.53.1
+    container_name: pga-prometheus
+    restart: unless-stopped
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/rules:/etc/prometheus/rules:ro
+      - prom-data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+      - --web.enable-lifecycle
+    ports:
+      - "9090:9090"
+    networks: [pga]
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: pga-alertmanager
+    restart: unless-stopped
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    ports:
+      - "9093:9093"
+    networks: [pga]
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    container_name: pga-grafana
+    restart: unless-stopped
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: pga123
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      TZ: Asia/Shanghai
+    ports:
+      - "3000:3000"
+    depends_on: [prometheus]
+    networks: [pga]
+
+  # ---------- 采集器 ----------
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: pga-node-exporter
+    restart: unless-stopped
+    pid: host
+    command:
+      - --path.rootfs=/host
+    volumes:
+      - /:/host:ro,rslave
+    ports:
+      - "9100:9100"
+    networks: [pga]
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: pga-cadvisor
+    restart: unless-stopped
+    privileged: true
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    ports:
+      - "8090:8080"
+    networks: [pga]
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.66.0
+    container_name: pga-redis-exporter
+    restart: unless-stopped
+    environment:
+      REDIS_ADDR: redis://redis:6379
+    ports:
+      - "9121:9121"
+    networks: [pga]
+
+  # ---------- 被监控的业务集群 ----------
+  app:
+    image: nginx:alpine
+    restart: unless-stopped
+    deploy:
+      replicas: 3
+    networks: [pga]
+
+  redis:
+    image: redis:alpine
+    restart: unless-stopped
+    networks: [pga]
+
+  # HTTP 压测：持续请求 3 副本应用（DNS 轮询分流）
+  loadgen:
+    image: alpine:latest
+    restart: unless-stopped
+    command: >
+      sh -c 'while true; do
+        wget -q -O /dev/null http://app:80/ || true;
+        sleep 0.2;
+      done'
+    depends_on: [app]
+    networks: [pga]
+
+  # Redis 压测：INCR 计数器，制造可观测的写流量
+  redis-loadgen:
+    image: redis:alpine
+    restart: unless-stopped
+    command: >
+      sh -c 'while true; do
+        redis-cli -h redis INCR pga:hits >/dev/null || true;
+        redis-cli -h redis SET pga:last-hit "$(date +%T)" >/dev/null || true;
+        sleep 0.1;
+      done'
+    depends_on: [redis]
+    networks: [pga]
+
+volumes:
+  prom-data:
+  grafana-data:
+
+networks:
+  pga:
+    name: pga-net

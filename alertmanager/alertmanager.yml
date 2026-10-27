@@ -1,0 +1,13 @@
+# Alertmanager：告警分组与路由（演示用，未接真实通知渠道，UI 中查看）
+global:
+  resolve_timeout: 1m
+
+route:
+  receiver: default
+  group_by: ["alertname", "name"]
+  group_wait: 10s
+  group_interval: 1m
+  repeat_interval: 2m
+
+receivers:
+  - name: default

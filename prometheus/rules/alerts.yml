@@ -1,0 +1,46 @@
+# PGA 集群告警规则
+groups:
+  - name: pga-cluster
+    rules:
+      - alert: ExporterDown
+        expr: up{job=~"node-exporter|redis-exporter|cadvisor"} == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "采集器 {{ $labels.job }} 已失联"
+          description: "{{ $labels.instance }} 已经 30 秒抓不到指标。"
+
+      - alert: AppContainerDown
+        expr: time() - container_last_seen{name=~".*-app-[0-9]+"} > 60
+        for: 30s
+        labels:
+          severity: warning
+        annotations:
+          summary: "应用容器 {{ $labels.name }} 掉线"
+          description: "容器 {{ $labels.name }} 超过 60 秒无心跳，应用副本数可能不足。"
+
+      - alert: HighNodeCPU
+        expr: 100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[2m])) * 100) > 85
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "节点 CPU 使用率超过 85%"
+          description: "当前 {{ $value | printf \"%.1f\" }}%。"
+
+      - alert: NodeMemoryPressure
+        expr: (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) > 0.9
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "节点内存使用率超过 90%"
+
+      - alert: RedisGone
+        expr: redis_up == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Redis 实例不可达"
