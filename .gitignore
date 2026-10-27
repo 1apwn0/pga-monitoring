@@ -1,2 +1,3 @@
 *.log
 .DS_Store
+scripts/cadvisor/cadvisor-binary
